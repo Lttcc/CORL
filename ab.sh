@@ -1,0 +1,1 @@
+nohup python algorithms/finetune/awac.py --device "cuda:0" --seed 0 --env_name "halfcheetah-medium-expert-v2" > halfcheetah_medium-expert_awac0.out 2>&1 &

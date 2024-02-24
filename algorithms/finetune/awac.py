@@ -22,21 +22,21 @@ ENVS_WITH_GOAL = ("antmaze", "pen", "door", "hammer", "relocate")
 
 @dataclass
 class TrainConfig:
-    project: str = "CORL"
-    group: str = "AWAC-D4RL"
-    name: str = "AWAC"
+    project: str = "O2O-Baseline"
+    group: str = "AWAC-MUJOCO"
+    alg: str = "AWAC"
     checkpoints_path: Optional[str] = None
 
     env_name: str = "halfcheetah-medium-expert-v2"
     seed: int = 42
     eval_seed: int = 0  # Eval environment seed
     test_seed: int = 69
-    deterministic_torch: bool = True
+    deterministic_torch: bool = False
     device: str = "cuda"
 
     buffer_size: int = 20_000_000
     offline_iterations: int = int(1e6)  # Number of offline updates
-    online_iterations: int = int(1e6)  # Number of online updates
+    online_iterations: int = int(1e5)  # Number of online updates
     batch_size: int = 256
     eval_frequency: int = 1000
     n_test_episodes: int = 10
@@ -49,7 +49,7 @@ class TrainConfig:
     awac_lambda: float = 1.0
 
     def __post_init__(self):
-        self.name = f"{self.name}-{self.env_name}-{str(uuid.uuid4())[:8]}"
+        self.name = f"{self.alg}-{self.env_name}-{str(uuid.uuid4())[:8]}"
         if self.checkpoints_path is not None:
             self.checkpoints_path = os.path.join(self.checkpoints_path, self.name)
 
