@@ -25,6 +25,7 @@ class TrainConfig:
     project: str = "O2O-Baseline"
     group: str = "AWAC-MUJOCO"
     alg: str = "AWAC"
+    name: str=""
     checkpoints_path: Optional[str] = None
 
     env_name: str = "halfcheetah-medium-expert-v2"
