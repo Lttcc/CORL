@@ -25,8 +25,9 @@ class TrainConfig:
     project: str = "O2O-Baseline"
     group: str = "AWAC-MUJOCO"
     alg: str = "AWAC"
+    checkpoints_path: Optional[str] = "offline_model"
+    load_offline_path: Optional[str] = None
     name: str=""
-    checkpoints_path: Optional[str] = None
 
     env_name: str = "halfcheetah-medium-expert-v2"
     seed: int = 42
@@ -52,7 +53,7 @@ class TrainConfig:
     def __post_init__(self):
         self.name = f"{self.alg}-{self.env_name}-{str(uuid.uuid4())[:8]}"
         if self.checkpoints_path is not None:
-            self.checkpoints_path = os.path.join(self.checkpoints_path, self.name)
+            self.checkpoints_path = os.path.join(self.checkpoints_path, f"{self.alg}-{self.env_name}")
 
 
 class ReplayBuffer:
@@ -538,15 +539,72 @@ def train(config: TrainConfig):
 
     eval_successes = []
     train_successes = []
+    if config.load_offline_path is None:
+        print("Offline pretraining")
+        for t in trange(
+            int(config.offline_iterations), ncols=80
+        ):
+            batch = replay_buffer.sample(config.batch_size)
+            batch = [b.to(config.device) for b in batch]
+            update_result = awac.update(batch)
+            update_result[
+                "offline_iter" 
+            ] = t
+            update_result.update(online_log)
+            wandb.log(update_result, step=t)
+            if (t + 1) % config.eval_frequency == 0:
+                eval_scores, success_rate = eval_actor(
+                    eval_env, actor, config.device, config.n_test_episodes, config.test_seed
+                )
+                eval_log = {}
 
-    print("Offline pretraining")
-    for t in trange(
-        int(config.offline_iterations) + int(config.online_iterations), ncols=80
-    ):
-        if t == config.offline_iterations:
-            print("Online tuning")
-        online_log = {}
-        if t >= config.offline_iterations:
+                full_eval_scores.append(eval_scores)
+                wandb.log({"eval/eval_score": eval_scores.mean()}, step=t)
+                if hasattr(eval_env, "get_normalized_score"):
+                    normalized = eval_env.get_normalized_score(np.mean(eval_scores))
+                    # Valid only for envs with goal, e.g. AntMaze, Adroit
+                    if t >= config.offline_iterations and is_env_with_goal:
+                        eval_successes.append(success_rate)
+                        eval_log["eval/regret"] = np.mean(1 - np.array(train_successes))
+                        eval_log["eval/success_rate"] = success_rate
+                    normalized_eval_scores = normalized * 100.0
+                    full_normalized_eval_scores.append(normalized_eval_scores)
+                    eval_log["eval/d4rl_normalized_score"] = normalized_eval_scores
+                    wandb.log(eval_log, step=t)
+            if t+1 == config.offline_iterations:
+                print("save offline checkpoint")
+                if config.checkpoints_path:
+                    torch.save(
+                        awac.state_dict(),
+                        os.path.join(config.checkpoints_path, f"checkpoint_offline.pt"),
+                    )
+    else:
+        print("load offline checkpoint")
+        awac.load_state_dict(torch.load(os.path.join(config.load_offline_path, "checkpoint_offline.pt")))
+        print("Online tuning")
+        for t in trange(
+            int(config.online_iterations)+1000,ncols=80
+        ):
+            if t  % config.eval_frequency == 0:
+                eval_scores, success_rate = eval_actor(
+                    eval_env, actor, config.device, config.n_test_episodes, config.test_seed
+                )
+                eval_log = {}
+
+                full_eval_scores.append(eval_scores)
+                wandb.log({"eval/eval_score": eval_scores.mean()}, step=t)
+                if hasattr(eval_env, "get_normalized_score"):
+                    normalized = eval_env.get_normalized_score(np.mean(eval_scores))
+                    # Valid only for envs with goal, e.g. AntMaze, Adroit
+                    if t >= config.offline_iterations and is_env_with_goal:
+                        eval_successes.append(success_rate)
+                        eval_log["eval/regret"] = np.mean(1 - np.array(train_successes))
+                        eval_log["eval/success_rate"] = success_rate
+                    normalized_eval_scores = normalized * 100.0
+                    full_normalized_eval_scores.append(normalized_eval_scores)
+                    eval_log["eval/d4rl_normalized_score"] = normalized_eval_scores
+                    wandb.log(eval_log, step=t)
+            online_log = {} 
             episode_step += 1
             action, _ = actor(
                 torch.tensor(
@@ -585,38 +643,21 @@ def train(config: TrainConfig):
                 episode_step = 0
                 goal_achieved = False
 
-        batch = replay_buffer.sample(config.batch_size)
-        batch = [b.to(config.device) for b in batch]
-        update_result = awac.update(batch)
-        update_result[
-            "offline_iter" if t < config.offline_iterations else "online_iter"
-        ] = (t if t < config.offline_iterations else t - config.offline_iterations)
-        update_result.update(online_log)
-        wandb.log(update_result, step=t)
-        if (t + 1) % config.eval_frequency == 0:
-            eval_scores, success_rate = eval_actor(
-                eval_env, actor, config.device, config.n_test_episodes, config.test_seed
-            )
-            eval_log = {}
+            batch = replay_buffer.sample(config.batch_size)
+            batch = [b.to(config.device) for b in batch]
+            update_result = awac.update(batch)
+            update_result[
+                "online_iter"
+            ] = t
+            update_result.update(online_log)
+            wandb.log(update_result, step=t)
+            
 
-            full_eval_scores.append(eval_scores)
-            wandb.log({"eval/eval_score": eval_scores.mean()}, step=t)
-            if hasattr(eval_env, "get_normalized_score"):
-                normalized = eval_env.get_normalized_score(np.mean(eval_scores))
-                # Valid only for envs with goal, e.g. AntMaze, Adroit
-                if t >= config.offline_iterations and is_env_with_goal:
-                    eval_successes.append(success_rate)
-                    eval_log["eval/regret"] = np.mean(1 - np.array(train_successes))
-                    eval_log["eval/success_rate"] = success_rate
-                normalized_eval_scores = normalized * 100.0
-                full_normalized_eval_scores.append(normalized_eval_scores)
-                eval_log["eval/d4rl_normalized_score"] = normalized_eval_scores
-                wandb.log(eval_log, step=t)
-            if config.checkpoints_path:
-                torch.save(
-                    awac.state_dict(),
-                    os.path.join(config.checkpoints_path, f"checkpoint_{t}.pt"),
-                )
+            # if config.checkpoints_path:
+            #     torch.save(
+            #         awac.state_dict(),
+            #         os.path.join(config.checkpoints_path, f"checkpoint_{t}.pt"),
+            #     )
     wandb.finish()
 
 

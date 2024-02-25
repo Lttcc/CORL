@@ -14,6 +14,8 @@ __pycache__/
 # C extensions
 *.so
 .idea
+*.out
+offline_model/
 
 # Distribution / packaging
 .Python
